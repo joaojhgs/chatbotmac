@@ -1,0 +1,109 @@
+[project]
+name = "macbook-air-chatbot"
+version = "1.0.0"
+description = "Chatbot agent specialized in MacBook Air questions with RAG and web search"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # FastAPI and server
+    "fastapi==0.115.0",
+    "uvicorn[standard]==0.30.6",
+    "python-multipart==0.0.9",
+    # LangChain and OpenAI
+    "langchain==0.3.0",
+    "langchain-openai==0.2.0",
+    "langchain-community==0.3.0",
+    # OpenAI SDK
+    "openai==1.54.0",
+    # Supabase
+    "supabase==2.8.0",
+    # Environment variables
+    "python-dotenv==1.0.1",
+    # Additional dependencies
+    "pydantic==2.9.0",
+    "httpx==0.27.0",
+    # Web scraping dependencies
+    "beautifulsoup4==4.12.3",
+    "lxml>=5.1.0",
+    "langchain-text-splitters==0.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.6.0",
+]
+
+[tool.setuptools]
+packages = ["app", "app.tools", "app.rag", "app.models"]
+
+[tool.setuptools.package-data]
+"*" = ["*.txt", "*.md"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+# Set the maximum line length
+line-length = 100
+
+# Exclude common directories
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+# Enable specific rule sets
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG", # flake8-unused-arguments
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+    "PIE", # flake8-pie
+    "PT",  # flake8-pytest-style
+    "RET", # flake8-return
+    "RUF", # Ruff-specific rules
+]
+
+# Ignore specific rules
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+    "ARG001", # unused function argument (common in FastAPI route handlers)
+    "ARG002", # unused method argument
+]
+
+[tool.ruff.lint.isort]
+# Use a single line for imports
+force-single-line = false
+# Known first-party imports
+known-first-party = ["app"]
+
+[tool.ruff.lint.per-file-ignores]
+# Allow unused imports in __init__.py files
+"__init__.py" = ["F401"]
+# Allow longer lines in scripts
+"scripts/*" = ["E501"]
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+# Indent with spaces
+indent-style = "space"
+# Respect magic trailing commas
+skip-magic-trailing-comma = false
+# Automatically detect the appropriate line ending
+line-ending = "auto"
+
