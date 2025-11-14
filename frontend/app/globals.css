@@ -36,10 +36,16 @@ body {
 }
 
 .glass-dark {
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(30px) saturate(180%);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  background: rgba(0, 0, 0, 0.15) !important;
+  backdrop-filter: blur(15px) saturate(120%) !important;
+  -webkit-backdrop-filter: blur(15px) saturate(120%) !important;
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Reduce header padding */
+.glass-dark.border-b {
+  padding-top: 0.75rem !important;
+  padding-bottom: 0.75rem !important;
 }
 
 .glass-strong {
@@ -66,6 +72,25 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+/* Prompts container scrollbar styling */
+.prompts-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.prompts-container::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+}
+
+.prompts-container::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+.prompts-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
 }
 
 /* Animations */
@@ -132,4 +157,84 @@ body {
 .ant-input-group {
   border: none !important;
   box-shadow: none !important;
+}
+
+/* Prompts component styling - liquid glass Apple style */
+.prompts-container {
+  margin-bottom: 12px;
+  max-height: 150px;
+  min-height: 50px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+  padding-bottom: 4px;
+  /* Ensure mouse wheel scrolling works */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.prompts-container .ant-x-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-content: flex-start;
+  /* Ensure content can exceed container height */
+  min-height: min-content;
+}
+
+.prompts-container .ant-x-prompts-item {
+  background: rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 12px !important;
+  padding: 10px 16px !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.prompts-container .ant-x-prompts-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.1),
+    transparent
+  );
+  transition: left 0.5s ease;
+}
+
+.prompts-container .ant-x-prompts-item:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
+}
+
+.prompts-container .ant-x-prompts-item:hover::before {
+  left: 100%;
+}
+
+.prompts-container .ant-x-prompts-item:active {
+  transform: translateY(0) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Ensure text is readable */
+.prompts-container .ant-x-prompts-item span,
+.prompts-container .ant-x-prompts-item div {
+  color: rgba(255, 255, 255, 0.9) !important;
+  position: relative;
+  z-index: 1;
 }

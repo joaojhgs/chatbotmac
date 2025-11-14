@@ -1,13 +1,14 @@
 // SSE streaming utility for handling backend events
 
 export interface SSEMessage {
-  type: 'content_delta' | 'tool_call' | 'tool_result' | 'content' | 'done' | 'error';
+  type: 'content_delta' | 'tool_call' | 'tool_result' | 'content' | 'done' | 'error' | 'conversation_id';
   content?: string;
   tool?: string;
   input?: unknown;
   result?: string;
   message?: string;
   traceback?: string;
+  conversation_id?: string;
 }
 
 export async function* parseSSEStream(
