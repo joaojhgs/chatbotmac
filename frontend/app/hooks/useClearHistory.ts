@@ -10,24 +10,32 @@ export function useClearHistory() {
   const { conversationId, setConversationId, clearConversation } = useChatStore();
 
   const handleClearHistory = async () => {
-    if (conversationId) {
+    const oldConversationId = conversationId;
+    
+    // Clear store state first (messages, tool calls, etc.)
+    clearConversation();
+    
+    // Clear localStorage
+    clearConversationId();
+    
+    // Generate and save new ID immediately
+    const newId = generateConversationId();
+    saveConversationId(newId);
+    
+    // Set new ID in store BEFORE deleting old conversation
+    // This ensures useConversationHistory uses the new ID
+    setConversationId(newId);
+    
+    // Delete old conversation from backend (if it exists)
+    if (oldConversationId) {
       try {
-        await fetch(`${API_URL}/conversations/${conversationId}`, {
+        await fetch(`${API_URL}/conversations/${oldConversationId}`, {
           method: 'DELETE',
         });
       } catch (error) {
         console.error('Failed to delete conversation:', error);
       }
     }
-    // Clear localStorage first
-    clearConversationId();
-    // Clear store state
-    clearConversation();
-    // Generate and save new ID
-    const newId = generateConversationId();
-    saveConversationId(newId);
-    // Set new ID in store (this will trigger useConversationHistory to reload)
-    setConversationId(newId);
   };
 
   return { handleClearHistory };

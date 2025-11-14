@@ -28,7 +28,8 @@ export function useConversationHistory() {
   const noChangeCountRef = useRef<number>(0); // Count consecutive polls with no change
 
   const loadHistory = async (isPolling = false) => {
-    // Use conversationId from store if available, otherwise get from localStorage
+    // Always use conversationId from store first (single source of truth)
+    // Only fall back to localStorage if store is null (initial load)
     const convId = conversationId || getConversationId();
     
     // Skip if we've already loaded this conversation ID (unless polling)
@@ -36,9 +37,14 @@ export function useConversationHistory() {
       return;
     }
     
-    // Update store with conversation ID if it wasn't already set
-    if (!conversationId) {
+    // If conversationId is null but we got one from localStorage, sync it to store
+    if (!conversationId && convId) {
       setConversationId(convId);
+    }
+    
+    // Reset lastLoadedIdRef if conversationId changed (history was cleared)
+    if (!isPolling && lastLoadedIdRef.current && lastLoadedIdRef.current !== convId) {
+      lastLoadedIdRef.current = null;
     }
     
     if (!isPolling) {
@@ -226,6 +232,19 @@ export function useConversationHistory() {
   };
 
   useEffect(() => {
+    // Reset tracking refs when conversation ID changes (e.g., after clearing history)
+    if (conversationId && lastLoadedIdRef.current && lastLoadedIdRef.current !== conversationId) {
+      lastLoadedIdRef.current = null;
+      lastContentLengthRef.current = 0;
+      noChangeCountRef.current = 0;
+      // Stop any existing polling
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
+      }
+      pollStartTimeRef.current = null;
+    }
+    
     loadHistory(false);
     
     // Cleanup polling on unmount

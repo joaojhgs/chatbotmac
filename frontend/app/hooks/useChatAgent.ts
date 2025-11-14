@@ -35,11 +35,19 @@ export function useChatAgent() {
       hasContentForCurrentMessageRef.current = false;
       setHasContent(false);
 
-      // Get or use current conversation ID
+      // Always use conversationId from store (single source of truth)
+      // Only fall back to localStorage if store is null (shouldn't happen after initial load)
       const convId = conversationId || getConversationId();
-      if (!conversationId) {
+      
+      // Sync to store if needed (shouldn't happen after initial load)
+      if (!conversationId && convId) {
         setConversationId(convId);
       }
+      
+      // Ensure we're using the store's conversationId, not a stale localStorage value
+      // This prevents using old IDs after clearing history
+      const currentStoreId = useChatStore.getState().conversationId;
+      const finalConvId = currentStoreId || convId;
 
       // Create assistant message immediately with loading state
       // This ensures the message bubble appears before content arrives
@@ -62,7 +70,7 @@ export function useChatAgent() {
           },
           body: JSON.stringify({
             message,
-            conversation_id: convId,
+            conversation_id: finalConvId,
           }),
         });
 
@@ -77,11 +85,14 @@ export function useChatAgent() {
 
           switch (sseEvent.type) {
             case 'conversation_id':
-              // Only update conversation ID if we don't already have one set
-              // This prevents restoring old IDs after clearing history
-              if (sseEvent.conversation_id && !conversationId) {
-                setConversationId(sseEvent.conversation_id);
-                saveConversationId(sseEvent.conversation_id);
+              // Always update conversation ID from SSE to keep in sync with backend
+              // But only if it's different from what we have
+              if (sseEvent.conversation_id) {
+                const currentStoreId = useChatStore.getState().conversationId;
+                if (sseEvent.conversation_id !== currentStoreId) {
+                  setConversationId(sseEvent.conversation_id);
+                  saveConversationId(sseEvent.conversation_id);
+                }
               }
               break;
 
