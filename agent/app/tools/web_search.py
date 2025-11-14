@@ -2,7 +2,6 @@
 
 import os
 
-from langchain.tools import tool
 from langchain_community.tools import BraveSearch
 
 
@@ -17,29 +16,24 @@ def create_web_search_tool():
             "Get your API key from https://brave.com/search/api/"
         )
 
-    # Initialize Brave Search tool
-    search = BraveSearch.from_api_key(api_key=brave_api_key)
+    # Create Brave Search tool directly and customize its name and description
+    search_tool = BraveSearch.from_api_key(api_key=brave_api_key)
+    
+    # Override the name to be "web_search" instead of "brave_search"
+    search_tool.name = "web_search"
+    search_tool.description = """Search the web for current information about MacBook Air using Brave Search.
 
-    @tool
-    def web_search(query: str) -> str:
-        """Search the web for current information about MacBook Air using Brave Search.
+Use this tool when you need:
+- Current prices and availability
+- Latest news and updates
+- Recent reviews and comparisons
+- Up-to-date specifications
+- Current promotions or deals
 
-        Use this tool when you need:
-        - Current prices and availability
-        - Latest news and updates
-        - Recent reviews and comparisons
-        - Up-to-date specifications
-        - Current promotions or deals
+Args:
+    query: The search query string
 
-        Args:
-            query: The search query string
+Returns:
+    Search results as a string"""
 
-        Returns:
-            Search results as a string
-        """
-        try:
-            return search.invoke(query)
-        except Exception as e:
-            return f"Error performing web search: {e!s}"
-
-    return web_search
+    return search_tool
