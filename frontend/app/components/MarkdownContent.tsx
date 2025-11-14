@@ -6,10 +6,12 @@ import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 
 interface MarkdownContentProps {
-  content: string;
+  content: string | unknown;
 }
 
 export const MarkdownContent: React.FC<MarkdownContentProps> = ({ content }) => {
+  // Ensure content is always a string
+  const contentString = typeof content === 'string' ? content : String(content || '');
   const components: Partial<Components> = {
     // Customize code blocks
     code: ({ className, children, ...props }) => {
@@ -75,7 +77,7 @@ export const MarkdownContent: React.FC<MarkdownContentProps> = ({ content }) => 
   return (
     <div className="markdown-content prose prose-invert prose-sm max-w-none dark:prose-invert">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {content}
+        {contentString}
       </ReactMarkdown>
     </div>
   );

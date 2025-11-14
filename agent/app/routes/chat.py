@@ -29,6 +29,7 @@ async def chat_stream(
 ):
     """
     Chat endpoint with Server-Sent Events (SSE) streaming.
+    Uses asyncio background task to ensure final message is saved even if client disconnects.
 
     Args:
         request: ChatRequest with user message and optional conversation_id
@@ -45,7 +46,10 @@ async def chat_stream(
             raise HTTPException(status_code=400, detail="Invalid conversation_id format")
 
     return StreamingResponse(
-        chat_service.stream_chat_response(message=request.message, conversation_id=conversation_id),
+        chat_service.stream_chat_response(
+            message=request.message,
+            conversation_id=conversation_id,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

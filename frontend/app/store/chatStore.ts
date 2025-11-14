@@ -12,6 +12,7 @@ export interface Message {
   content: string;
   status?: 'loading' | 'local' | 'done';
   timestamp?: number;
+  isPolling?: boolean; // Track if message is still being updated via polling
 }
 
 interface ChatState {

@@ -1,8 +1,10 @@
 """Service for handling chat streaming and agent interactions."""
 
+import asyncio
 import json
 import traceback
 from uuid import UUID
+from collections.abc import AsyncIterator
 
 from langchain.agents import AgentExecutor
 from app.models.database import MessageWithToolCalls
@@ -28,9 +30,12 @@ class ChatService:
         self.agent = agent
         self.conversation_service = conversation_service
 
-    async def stream_chat_response(self, message: str, conversation_id: UUID | None = None):
+    async def stream_chat_response(
+        self, message: str, conversation_id: UUID | None = None
+    ):
         """
         Stream chat response using SSE.
+        Ensures final message is saved even if client disconnects.
 
         Args:
             message: User message
@@ -61,109 +66,277 @@ class ChatService:
 
         # Track tool calls for this message
         tool_calls_data: list[dict] = []
+        
+        # Use a queue to pass events from background task to generator
+        event_queue = asyncio.Queue()
+        SAVE_INTERVAL = 100  # Save every 100 characters to ensure persistence
 
-        try:
-            # Send conversation_id in the stream
-            yield f"data: {json.dumps({'type': 'conversation_id', 'conversation_id': str(conversation_id)})}\n\n"
-
-            # Use astream_events for better streaming granularity
+        async def process_agent_stream():
+            """Process agent stream in background - continues even if generator stops."""
             full_response = ""
-            assistant_message_id: UUID | None = None
+            assistant_message_id = None
+            last_save_length = 0
+            # Track which tool calls have been saved to prevent duplicates
+            saved_tool_call_ids: set[str] = set()
+            
+            try:
+                # Prepare agent input with chat history
+                agent_input = {
+                    "input": message,
+                    "chat_history": chat_history,
+                }
 
-            # Prepare agent input with chat history
-            agent_input = {
-                "input": message,
-                "chat_history": chat_history,
-            }
+                # Process agent events completely, regardless of client connection
+                async for event in self.agent.astream_events(agent_input, version="v2"):
+                    event_type = event.get("event")
+                    name = event.get("name", "")
 
-            async for event in self.agent.astream_events(agent_input, version="v2"):
-                event_type = event.get("event")
-                name = event.get("name", "")
+                    # Handle LLM token streaming
+                    if event_type == "on_chat_model_stream" and name == "ChatOpenAI":
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            content = chunk.content
+                            if content:
+                                full_response += content
+                                
+                                # Put event in queue for generator to yield
+                                # If queue is full or closed, continue processing (background task continues)
+                                try:
+                                    await event_queue.put({
+                                        "type": "content_delta",
+                                        "content": content
+                                    })
+                                except Exception:
+                                    pass
+                                
+                                # Save message incrementally
+                                if assistant_message_id is None:
+                                    assistant_message_id = self.conversation_service.save_message(
+                                        conversation_id=conversation_id,
+                                        role="assistant",
+                                        content=full_response,
+                                    )
+                                    # Save any tool calls that have been completed so far
+                                    if assistant_message_id and tool_calls_data:
+                                        for tool_call in tool_calls_data:
+                                            # Only save if it has a result (completed) and hasn't been saved yet
+                                            tool_call_id = f"{tool_call['tool_name']}_{hash(str(tool_call.get('input', {})))}"
+                                            if tool_call.get("result") is not None and tool_call_id not in saved_tool_call_ids:
+                                                try:
+                                                    self.conversation_service.save_tool_call(
+                                                        message_id=assistant_message_id,
+                                                        tool_name=tool_call["tool_name"],
+                                                        input_data=tool_call["input"],
+                                                        result=tool_call["result"],
+                                                    )
+                                                    saved_tool_call_ids.add(tool_call_id)
+                                                except Exception:
+                                                    pass  # Tool call might already be saved
+                                elif len(full_response) - last_save_length >= SAVE_INTERVAL:
+                                    self.conversation_service.save_message(
+                                        conversation_id=conversation_id,
+                                        role="assistant",
+                                        content=full_response,
+                                        message_id=assistant_message_id,
+                                    )
+                                    last_save_length = len(full_response)
+                                    # Save any new tool calls that have been completed
+                                    if assistant_message_id and tool_calls_data:
+                                        for tool_call in tool_calls_data:
+                                            # Only save if it has a result (completed) and hasn't been saved yet
+                                            tool_call_id = f"{tool_call['tool_name']}_{hash(str(tool_call.get('input', {})))}"
+                                            if tool_call.get("result") is not None and tool_call_id not in saved_tool_call_ids:
+                                                try:
+                                                    self.conversation_service.save_tool_call(
+                                                        message_id=assistant_message_id,
+                                                        tool_name=tool_call["tool_name"],
+                                                        input_data=tool_call["input"],
+                                                        result=tool_call["result"],
+                                                    )
+                                                    saved_tool_call_ids.add(tool_call_id)
+                                                except Exception:
+                                                    pass  # Tool call might already be saved
 
-                # Handle LLM token streaming
-                if event_type == "on_chat_model_stream" and name == "ChatOpenAI":
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content") and chunk.content:
-                        content = chunk.content
-                        if content:
-                            data = {"type": "content_delta", "content": content}
-                            yield f"data: {json.dumps(data)}\n\n"
-                            full_response += content
-
-                # Handle tool calls
-                elif event_type == "on_tool_start":
-                    tool_name = event.get("name", "unknown")
-                    tool_input = event.get("data", {}).get("input", {})
-                    tool_data = {
-                        "type": "tool_call",
-                        "tool": tool_name,
-                        "input": tool_input,
-                    }
-                    tool_calls_data.append(
-                        {"tool_name": tool_name, "input": tool_input, "result": None}
-                    )
-                    yield f"data: {json.dumps(tool_data)}\n\n"
-
-                # Handle tool results
-                elif event_type == "on_tool_end":
-                    tool_name = event.get("name", "unknown")
-                    output = event.get("data", {}).get("output", "")
-                    tool_result_str = str(output)[:500]
-                    tool_result_data = {
-                        "type": "tool_result",
-                        "tool": tool_name,
-                        "result": tool_result_str,
-                    }
-                    # Update tool call data
-                    for tc in tool_calls_data:
-                        if tc["tool_name"] == tool_name and tc["result"] is None:
-                            tc["result"] = tool_result_str
-                            break
-                    yield f"data: {json.dumps(tool_result_data)}\n\n"
-
-                # Handle final agent output
-                elif event_type == "on_chain_end" and name == "AgentExecutor":
-                    output = event.get("data", {}).get("output", {})
-                    if isinstance(output, dict) and "output" in output:
-                        final_output = output["output"]
-                        if final_output and final_output != full_response:
-                            # Send any remaining content
-                            remaining = final_output[len(full_response) :]
-                            if remaining:
-                                data = {"type": "content_delta", "content": remaining}
-                                yield f"data: {json.dumps(data)}\n\n"
-                                full_response = final_output
-
-            # Send final complete response
-            if full_response:
-                data = {"type": "content", "content": full_response}
-                yield f"data: {json.dumps(data)}\n\n"
-
-            # Save assistant message and tool calls to database
-            if full_response:
-                assistant_message_id = self.conversation_service.save_message(
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=full_response,
-                )
-
-                # Save tool calls
-                if assistant_message_id and tool_calls_data:
-                    for tool_call in tool_calls_data:
-                        self.conversation_service.save_tool_call(
-                            message_id=assistant_message_id,
-                            tool_name=tool_call["tool_name"],
-                            input_data=tool_call["input"],
-                            result=tool_call["result"],
+                    # Handle tool calls
+                    elif event_type == "on_tool_start":
+                        tool_name = event.get("name", "unknown")
+                        tool_input = event.get("data", {}).get("input", {})
+                        tool_calls_data.append(
+                            {"tool_name": tool_name, "input": tool_input, "result": None}
                         )
+                        # Put event in queue for generator to yield
+                        try:
+                            await event_queue.put({
+                                "type": "tool_call",
+                                "tool": tool_name,
+                                "input": tool_input
+                            })
+                        except Exception:
+                            pass
 
-            # Send completion event
+                    # Handle tool results
+                    elif event_type == "on_tool_end":
+                        tool_name = event.get("name", "unknown")
+                        output = event.get("data", {}).get("output", "")
+                        tool_result_str = str(output)[:500]
+                        for tc in tool_calls_data:
+                            if tc["tool_name"] == tool_name and tc["result"] is None:
+                                tc["result"] = tool_result_str
+                                break
+                        # Save tool call immediately when result is available
+                        if assistant_message_id:
+                            for tc in tool_calls_data:
+                                if tc["tool_name"] == tool_name and tc["result"] is not None:
+                                    # Check if this tool call has already been saved
+                                    tool_call_id = f"{tc['tool_name']}_{hash(str(tc.get('input', {})))}"
+                                    if tool_call_id not in saved_tool_call_ids:
+                                        try:
+                                            self.conversation_service.save_tool_call(
+                                                message_id=assistant_message_id,
+                                                tool_name=tc["tool_name"],
+                                                input_data=tc["input"],
+                                                result=tc["result"],
+                                            )
+                                            saved_tool_call_ids.add(tool_call_id)
+                                        except Exception:
+                                            pass  # Tool call might already be saved
+                        # Put event in queue for generator to yield
+                        try:
+                            await event_queue.put({
+                                "type": "tool_result",
+                                "tool": tool_name,
+                                "result": tool_result_str
+                            })
+                        except Exception:
+                            pass
+
+                    # Handle final agent output - THIS IS THE COMPLETE RESPONSE
+                    elif event_type == "on_chain_end" and name == "AgentExecutor":
+                        output = event.get("data", {}).get("output", {})
+                        if isinstance(output, dict) and "output" in output:
+                            final_output = output["output"]
+                            if final_output:
+                                if not isinstance(final_output, str):
+                                    final_output = str(final_output)
+                                
+                                # Update with complete final output
+                                full_response = final_output
+                                
+                                # Save final complete message
+                                try:
+                                    if assistant_message_id:
+                                        self.conversation_service.save_message(
+                                            conversation_id=conversation_id,
+                                            role="assistant",
+                                            content=full_response,
+                                            message_id=assistant_message_id,
+                                        )
+                                    else:
+                                        assistant_message_id = self.conversation_service.save_message(
+                                            conversation_id=conversation_id,
+                                            role="assistant",
+                                            content=full_response,
+                                        )
+
+                                    # Save any remaining tool calls that haven't been saved yet
+                                    if assistant_message_id and tool_calls_data:
+                                        for tool_call in tool_calls_data:
+                                            # Only save if it has a result (completed) and hasn't been saved yet
+                                            tool_call_id = f"{tool_call['tool_name']}_{hash(str(tool_call.get('input', {})))}"
+                                            if tool_call.get("result") is not None and tool_call_id not in saved_tool_call_ids:
+                                                try:
+                                                    self.conversation_service.save_tool_call(
+                                                        message_id=assistant_message_id,
+                                                        tool_name=tool_call["tool_name"],
+                                                        input_data=tool_call["input"],
+                                                        result=tool_call["result"],
+                                                    )
+                                                    saved_tool_call_ids.add(tool_call_id)
+                                                except Exception:
+                                                    pass  # Tool call might already be saved
+                                    
+                                    print(f"✓ Final complete message saved (length: {len(full_response)}) for conversation {conversation_id}")
+                                except Exception as save_err:
+                                    print(f"✗ Failed to save final message: {save_err}")
+                                    import traceback
+                                    traceback.print_exc()
+                                
+                                # Put done event in queue
+                                try:
+                                    await event_queue.put({"type": "done"})
+                                except Exception:
+                                    pass
+                                
+                                return  # Exit background task
+                
+            except Exception as e:
+                print(f"Error in background agent processing: {e}")
+                import traceback
+                traceback.print_exc()
+                # Save partial message on error
+                if full_response and assistant_message_id:
+                    try:
+                        self.conversation_service.save_message(
+                            conversation_id=conversation_id,
+                            role="assistant",
+                            content=full_response,
+                            message_id=assistant_message_id,
+                        )
+                    except Exception as save_err:
+                        print(f"Failed to save partial message on error: {save_err}")
+                # Put error event in queue
+                try:
+                    await event_queue.put({"type": "error", "message": str(e)})
+                except Exception:
+                    pass
+        
+        # Start background task to process agent stream completely
+        # This ensures the final message is saved even if client disconnects
+        # Using asyncio.create_task() ensures it runs independently of the generator
+        # The task will continue even if the generator is cancelled (client disconnects)
+        background_task = asyncio.create_task(process_agent_stream())
+
+        # Send conversation_id in the stream
+        try:
+            yield f"data: {json.dumps({'type': 'conversation_id', 'conversation_id': str(conversation_id)})}\n\n"
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # Client disconnected - background task continues processing independently
+            pass
+
+        # Yield events from queue (produced by background task)
+        # Background task continues processing even if generator stops here
+        while True:
+            try:
+                # Get event from queue (with timeout to check if background task is done)
+                event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
+                
+                # Yield event to client
+                try:
+                    yield f"data: {json.dumps(event)}\n\n"
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    # Client disconnected - background task continues independently
+                    break
+                
+                # If done event, exit loop
+                if event.get("type") == "done":
+                    break
+                if event.get("type") == "error":
+                    break
+                    
+            except asyncio.TimeoutError:
+                # Check if background task is done
+                if background_task.done():
+                    break
+                # Otherwise continue waiting for events
+                continue
+            except Exception as stream_err:
+                # Log error but continue - background task handles processing
+                print(f"Error in generator stream: {stream_err}")
+                break
+
+        # Send completion event (if client still connected)
+        try:
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-        except Exception as e:
-            error_data = {
-                "type": "error",
-                "message": str(e),
-                "traceback": traceback.format_exc(),
-            }
-            yield f"data: {json.dumps(error_data)}\n\n"
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # Client disconnected - background task already saved final message
+            pass

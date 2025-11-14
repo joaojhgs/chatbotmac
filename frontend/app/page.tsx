@@ -1,364 +1,47 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { useXAgent, useXChat, Sender, Bubble, Prompts } from '@ant-design/x';
+import { Sender, Bubble, Prompts } from '@ant-design/x';
+import type { PromptProps } from '@ant-design/x';
 import { ConfigProvider, Flex, theme, Button } from 'antd';
 import { RobotOutlined, UserOutlined, DeleteOutlined } from '@ant-design/icons';
 import { ToolCallDisplay } from './components/ToolCallDisplay';
 import { MarkdownContent } from './components/MarkdownContent';
-import { parseSSEStream } from './utils/sse';
-import type { SSEMessage } from './utils/sse';
 import type { ToolCall } from './types/chat';
 import type { GetProp } from 'antd';
 import { useChatStore } from './store/chatStore';
 import {
-  getConversationId,
-  saveConversationId,
-  clearConversationId,
-  generateConversationId,
-} from './utils/conversation';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  useConversationHistory,
+  useSuggestions,
+  useChatAgent,
+  useMessageSync,
+  useClearHistory,
+} from './hooks';
 
 export default function Home() {
   const [inputValue, setInputValue] = useState('');
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-
-  const [showSuggestions, setShowSuggestions] = useState(true); // Show by default
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const promptsContainerRef = useRef<HTMLDivElement>(null);
-  const currentAssistantMessageIdRef = useRef<string | number | null>(null);
-  const hasContentForCurrentMessageRef = useRef(false);
 
   // Zustand store
   const {
-    conversationId,
     messages: storeMessages,
     toolCallsByMessageId,
     isLoadingHistory,
     isRequesting,
-    setConversationId,
-    addMessage,
-    updateMessage,
-    addToolCall,
-    updateToolCall,
-    setMessages,
-    setToolCallsForMessage,
-    setIsLoadingHistory,
-    setIsRequesting,
-    clearConversation,
   } = useChatStore();
 
-  // Load conversation history on mount
-  useEffect(() => {
-    const loadHistory = async () => {
-      const convId = getConversationId();
-      setConversationId(convId);
-      setIsLoadingHistory(true);
-
-      try {
-        const response = await fetch(`${API_URL}/conversations/${convId}/history`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.messages && data.messages.length > 0) {
-            // Convert history messages to store format
-            const historyMessages = data.messages.map((msg: any) => ({
-              id: msg.id,
-              role: msg.role,
-              content: msg.content,
-              status: 'done' as const,
-              timestamp: new Date(msg.created_at).getTime(),
-            }));
-
-            setMessages(historyMessages);
-
-            // Load tool calls for each message
-            data.messages.forEach((msg: any) => {
-              if (msg.tool_calls && msg.tool_calls.length > 0) {
-                const toolCalls: ToolCall[] = msg.tool_calls.map((tc: any) => ({
-                  id: tc.id,
-                  tool: tc.tool_name,
-                  input: tc.input || {},
-                  result: tc.result || undefined,
-                  timestamp: new Date(tc.created_at).getTime(),
-                }));
-                setToolCallsForMessage(msg.id, toolCalls);
-              }
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Failed to load conversation history:', error);
-      } finally {
-        setIsLoadingHistory(false);
-      }
-    };
-
-    loadHistory();
-  }, [setConversationId, setMessages, setToolCallsForMessage, setIsLoadingHistory]);
-
-  // Load prompt suggestions from API
-  useEffect(() => {
-    const loadSuggestions = async () => {
-      // Always use API endpoint, even when there's no conversation
-      if (!conversationId || isRequesting) {
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API_URL}/conversations/${conversationId}/suggestions`);
-        if (response.ok) {
-          const data = await response.json();
-          setSuggestions(data.suggestions || []);
-          setShowSuggestions(true);
-        } else {
-          console.error('Failed to load suggestions:', response.statusText);
-          setSuggestions([]);
-        }
-      } catch (error) {
-        console.error('Failed to load suggestions:', error);
-        setSuggestions([]);
-      }
-    };
-
-    loadSuggestions();
-  }, [conversationId, isRequesting]);
-
-  // Create agent with SSE streaming support
-  const [agent] = useXAgent({
-    request: async (info, callbacks) => {
-      const { message } = info;
-      const { onSuccess, onUpdate, onError } = callbacks;
-
-      setIsRequesting(true);
-      hasContentForCurrentMessageRef.current = false;
-
-      // Get or use current conversation ID
-      const convId = conversationId || getConversationId();
-      if (!conversationId) {
-        setConversationId(convId);
-      }
-
-      // Create assistant message immediately with loading state
-      // This ensures the message bubble appears before content arrives
-      const assistantMessageId = `assistant-${Date.now()}-${Math.random()}`;
-      currentAssistantMessageIdRef.current = assistantMessageId;
-      addMessage({
-        id: assistantMessageId,
-        role: 'assistant',
-        content: '',
-        status: 'loading',
-      });
-
-      let fullContent = '';
-
-      try {
-        const response = await fetch(`${API_URL}/chat`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message,
-            conversation_id: convId,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        // Parse SSE stream
-        for await (const event of parseSSEStream(response)) {
-          const sseEvent = event as SSEMessage;
-          const currentMessageId = currentAssistantMessageIdRef.current;
-
-          switch (sseEvent.type) {
-            case 'conversation_id':
-              if (sseEvent.conversation_id) {
-                setConversationId(sseEvent.conversation_id);
-                saveConversationId(sseEvent.conversation_id);
-              }
-              break;
-
-            case 'content_delta':
-              if (sseEvent.content) {
-                fullContent += sseEvent.content;
-                hasContentForCurrentMessageRef.current = true;
-                onUpdate(fullContent as any);
-                // Don't update store here - let useXChat handle it via onUpdate
-              }
-              break;
-
-            case 'tool_call':
-              if (sseEvent.tool && currentMessageId) {
-                const toolCallId = `${sseEvent.tool}-${Date.now()}`;
-                const toolCall: ToolCall = {
-                  id: toolCallId,
-                  tool: sseEvent.tool,
-                  input: sseEvent.input || {},
-                  timestamp: Date.now(),
-                };
-                addToolCall(currentMessageId, toolCall);
-              }
-              break;
-
-            case 'tool_result':
-              if (sseEvent.tool && sseEvent.result && currentMessageId) {
-                // Get current tool calls from store state (not selector) to get latest state
-                const currentState = useChatStore.getState();
-                const toolCalls = currentState.toolCallsByMessageId.get(String(currentMessageId)) || [];
-                const toolCall = toolCalls.find(
-                  (tc) => tc.tool === sseEvent.tool && !tc.result
-                );
-                if (toolCall) {
-                  updateToolCall(currentMessageId, toolCall.id, sseEvent.result);
-                }
-              }
-              break;
-
-            case 'content':
-              if (sseEvent.content) {
-                fullContent = sseEvent.content;
-                hasContentForCurrentMessageRef.current = true;
-                onUpdate(fullContent as any);
-                // Don't update store here - let useXChat handle it via onUpdate
-              }
-              break;
-
-            case 'done':
-              setIsRequesting(false);
-              // Don't update message here - useXChat will handle it via onSuccess
-              currentAssistantMessageIdRef.current = null;
-              onSuccess([fullContent] as any);
-              break;
-
-            case 'error':
-              setIsRequesting(false);
-              currentAssistantMessageIdRef.current = null;
-              onError(new Error(sseEvent.message || 'Unknown error'));
-              break;
-          }
-        }
-      } catch (error) {
-        console.error('Chat request failed:', error);
-        setIsRequesting(false);
-        currentAssistantMessageIdRef.current = null;
-        onError(error as Error);
-      }
-    },
-  });
-
-  // Manage chat state with useXChat
-  const { onRequest, messages: xChatMessages } = useXChat({ agent });
-
-  // Sync useXChat messages with Zustand store - prevent duplicates
-  useEffect(() => {
-    // Track messages we've processed in this effect run to prevent duplicates
-    const processedIds = new Set<string>();
-    
-    xChatMessages.forEach((xMsg) => {
-      const msgIdStr = String(xMsg.id);
-      
-      // Skip if we've already processed this message in this effect run
-      if (processedIds.has(msgIdStr)) {
-        return;
-      }
-      processedIds.add(msgIdStr);
-      
-      // Always get the latest store state for each message to avoid race conditions
-      const currentStoreMessages = useChatStore.getState().messages;
-      const existingMsg = currentStoreMessages.find((m) => String(m.id) === msgIdStr);
-      
-      if (!existingMsg) {
-        // Add new message only if it doesn't exist in store
-        const isUser = xMsg.status === 'local';
-        
-        // For assistant messages, check if we have a loading message to replace
-        if (!isUser && currentAssistantMessageIdRef.current) {
-          const loadingMsgId = String(currentAssistantMessageIdRef.current);
-          const loadingMsg = currentStoreMessages.find((m) => String(m.id) === loadingMsgId && m.status === 'loading');
-          
-          if (loadingMsg) {
-            // Replace the loading message with useXChat's message (same content, but use useXChat's ID)
-            // First, get any tool calls associated with the old message
-            const currentState = useChatStore.getState();
-            const oldToolCalls = currentState.toolCallsByMessageId.get(loadingMsgId) || [];
-            
-            // Remove the old message and add the new one
-            const updatedMessages = currentStoreMessages.filter((m) => String(m.id) !== loadingMsgId);
-            updatedMessages.push({
-              id: xMsg.id,
-              role: 'assistant',
-              content: xMsg.message,
-              status: xMsg.status === 'loading' ? 'loading' : 'done',
-            });
-            
-            // Update messages and migrate tool calls to new message ID
-            useChatStore.getState().setMessages(updatedMessages);
-            if (oldToolCalls.length > 0) {
-              const newMap = new Map(currentState.toolCallsByMessageId);
-              newMap.delete(loadingMsgId);
-              newMap.set(String(xMsg.id), oldToolCalls);
-              useChatStore.setState({ toolCallsByMessageId: newMap });
-            }
-            
-            // Update the ref to use the new ID
-            currentAssistantMessageIdRef.current = xMsg.id;
-            return; // Skip adding a new message
-          }
-        }
-        
-        addMessage({
-          id: xMsg.id,
-          role: isUser ? 'user' : 'assistant',
-          content: xMsg.message,
-          status: xMsg.status === 'local' ? 'local' : xMsg.status === 'loading' ? 'loading' : 'done',
-        });
-
-        // Track assistant message ID for tool calls
-        if (!isUser && xMsg.status === 'loading') {
-          currentAssistantMessageIdRef.current = xMsg.id;
-        }
-      } else {
-        // Only update if content or status actually changed
-        const contentChanged = existingMsg.content !== xMsg.message;
-        const newStatus = xMsg.status === 'local' ? 'local' : xMsg.status === 'loading' ? 'loading' : 'done';
-        const statusChanged = existingMsg.status !== newStatus;
-        
-        if (contentChanged || statusChanged) {
-          updateMessage(xMsg.id, {
-            content: xMsg.message,
-            status: newStatus,
-          });
-        }
-      }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [xChatMessages]); // Only depend on xChatMessages to avoid infinite loop
+  // Custom hooks
+  useConversationHistory();
+  const { suggestions, showSuggestions, setShowSuggestions } = useSuggestions();
+  const { agent, currentAssistantMessageIdRef, hasContent } = useChatAgent();
+  const { onRequest } = useMessageSync(agent, currentAssistantMessageIdRef);
+  const { handleClearHistory } = useClearHistory();
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [storeMessages]);
-
-  // Clear conversation handler
-  const handleClearHistory = async () => {
-    if (conversationId) {
-      try {
-        await fetch(`${API_URL}/conversations/${conversationId}`, {
-          method: 'DELETE',
-        });
-      } catch (error) {
-        console.error('Failed to delete conversation:', error);
-      }
-    }
-    clearConversationId();
-    clearConversation();
-    const newId = generateConversationId();
-    setConversationId(newId);
-    saveConversationId(newId);
-  };
 
   const roles: GetProp<typeof Bubble.List, 'roles'> = {
     ai: {
@@ -467,25 +150,25 @@ export default function Home() {
                 {storeMessages.map((msg, index) => {
                   const isUser = msg.role === 'user';
                   const toolCalls = getToolCallsForMessage(msg.id);
-                  const isLoading = !isUser && msg.status === 'loading' && !hasContentForCurrentMessageRef.current;
-                  
+                  const isLoading = !isUser && msg.status === 'loading' && !hasContent;
+
                   // Check if previous message was also a user message
                   const prevMsg = index > 0 ? storeMessages[index - 1] : null;
                   const isConsecutiveUserMessage = isUser && prevMsg?.role === 'user';
-                  
+
                   // Larger spacing on mobile for consecutive user messages
-                  const spacingClass = isConsecutiveUserMessage 
-                    ? 'mb-8 md:mb-4' 
-                    : 'mb-4';
+                  const spacingClass = isConsecutiveUserMessage ? 'mb-8 md:mb-4' : 'mb-4';
 
                   return (
                     <div key={String(msg.id)} className={spacingClass}>
                       <Bubble
                         content={
                           isUser ? (
-                            msg.content
+                            typeof msg.content === 'string' ? msg.content : String(msg.content || '')
                           ) : (
-                            <MarkdownContent content={msg.content} />
+                            <MarkdownContent
+                              content={typeof msg.content === 'string' ? msg.content : String(msg.content || '')}
+                            />
                           )
                         }
                         placement={isUser ? 'end' : 'start'}
@@ -513,7 +196,7 @@ export default function Home() {
           <div className="mx-auto max-w-4xl space-y-3">
             {/* Prompt Suggestions */}
             {showSuggestions && suggestions.length > 0 && (
-              <div 
+              <div
                 ref={promptsContainerRef}
                 className="prompts-container"
                 onWheel={(e) => {
@@ -526,13 +209,14 @@ export default function Home() {
                     }
                     e.stopPropagation();
                   }
-                }}>
+                }}
+              >
                 <Prompts
                   items={suggestions.map((suggestion, index) => ({
                     key: String(index),
                     label: suggestion,
                   }))}
-                  onItemClick={(item) => {
+                  onItemClick={(item: { data: PromptProps }) => {
                     const label = String(item.data?.label || suggestions[Number(item.data?.key) || 0] || '');
                     if (label) {
                       onRequest(label);
@@ -548,7 +232,7 @@ export default function Home() {
               <Sender
                 value={inputValue}
                 onChange={setInputValue}
-                onSubmit={(text) => {
+                onSubmit={(text: string) => {
                   onRequest(text);
                   setInputValue('');
                   setShowSuggestions(false);

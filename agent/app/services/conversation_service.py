@@ -55,7 +55,7 @@ class ConversationService:
         self.supabase.table("conversations").insert({"id": str(conversation_id)}).execute()
         return conversation_id
 
-    def save_message(self, conversation_id: UUID, role: str, content: str) -> UUID:
+    def save_message(self, conversation_id: UUID, role: str, content: str, message_id: UUID | None = None) -> UUID:
         """
         Save a message to the database.
 
@@ -63,19 +63,26 @@ class ConversationService:
             conversation_id: Conversation ID
             role: Message role ('user' or 'assistant')
             content: Message content
+            message_id: Optional message ID (if provided, updates existing message)
 
         Returns:
             Message ID (UUID)
         """
-        message_id = uuid4()
-        self.supabase.table("messages").insert(
-            {
-                "id": str(message_id),
-                "conversation_id": str(conversation_id),
-                "role": role,
-                "content": content,
-            }
-        ).execute()
+        if message_id is None:
+            message_id = uuid4()
+            self.supabase.table("messages").insert(
+                {
+                    "id": str(message_id),
+                    "conversation_id": str(conversation_id),
+                    "role": role,
+                    "content": content,
+                }
+            ).execute()
+        else:
+            # Update existing message (messages table doesn't have updated_at column)
+            self.supabase.table("messages").update(
+                {"content": content}
+            ).eq("id", str(message_id)).execute()
         return message_id
 
     def save_tool_call(
