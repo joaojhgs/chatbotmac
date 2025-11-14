@@ -14,9 +14,7 @@ def get_conversation_service() -> ConversationService:
     from app.main import conversation_service
 
     if conversation_service is None:
-        raise HTTPException(
-            status_code=503, detail="Conversation service not initialized"
-        )
+        raise HTTPException(status_code=503, detail="Conversation service not initialized")
     return conversation_service
 
 
@@ -95,4 +93,3 @@ async def delete_conversation(
 
     conversation_service.delete_conversation(conv_id)
     return {"success": True}
-

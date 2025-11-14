@@ -26,4 +26,3 @@ async def health_check():
     from app.main import agent
 
     return {"status": "healthy", "agent_initialized": agent is not None}
-

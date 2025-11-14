@@ -44,4 +44,3 @@ class MessageWithToolCalls(BaseModel):
     content: str
     created_at: datetime
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
-

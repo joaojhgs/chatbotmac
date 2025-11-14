@@ -44,9 +44,7 @@ class SuggestionService:
         """
         return DEFAULT_SUGGESTIONS.copy()
 
-    async def generate_suggestions(
-        self, history: list[MessageWithToolCalls]
-    ) -> list[str]:
+    async def generate_suggestions(self, history: list[MessageWithToolCalls]) -> list[str]:
         """
         Generate contextual suggestions based on conversation history.
 
@@ -68,10 +66,12 @@ class SuggestionService:
             )
 
             # Format conversation history for context
-            history_text = "\n".join([
-                f"{'User' if msg.role == 'user' else 'Assistant'}: {msg.content[:200]}"
-                for msg in history[-3:]  # Last 3 messages
-            ])
+            history_text = "\n".join(
+                [
+                    f"{'User' if msg.role == 'user' else 'Assistant'}: {msg.content[:200]}"
+                    for msg in history[-3:]  # Last 3 messages
+                ]
+            )
 
             prompt = f"""You are a helpful assistant for a MacBook Air chatbot. Based on the conversation history below, generate 3 relevant follow-up question suggestions that would be helpful for the user.
 
@@ -80,10 +80,12 @@ Conversation History:
 
 Generate exactly 3 short (up to 10 words), specific questions in place of the user, asking a specialized agent for help, (each should be a complete question, not just keywords). Make them relevant to the MacBook Air and the conversation context. Return only the questions, one per line, without numbering or bullets."""
 
-            response = await llm.ainvoke([
-                SystemMessage(content="You are a helpful assistant."),
-                HumanMessage(content=prompt),
-            ])
+            response = await llm.ainvoke(
+                [
+                    SystemMessage(content="You are a helpful assistant."),
+                    HumanMessage(content=prompt),
+                ]
+            )
 
             # Parse LLM response into list of suggestions
             llm_suggestions = [
@@ -102,4 +104,3 @@ Generate exactly 3 short (up to 10 words), specific questions in place of the us
             print(f"Error generating LLM suggestions: {e}")
             # Fallback to defaults on error
             return self.get_default_suggestions()
-

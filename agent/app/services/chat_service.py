@@ -28,9 +28,7 @@ class ChatService:
         self.agent = agent
         self.conversation_service = conversation_service
 
-    async def stream_chat_response(
-        self, message: str, conversation_id: UUID | None = None
-    ):
+    async def stream_chat_response(self, message: str, conversation_id: UUID | None = None):
         """
         Stream chat response using SSE.
 
@@ -44,9 +42,7 @@ class ChatService:
         # Get or create conversation ID
         if conversation_id:
             # Ensure conversation exists, create if it doesn't
-            conversation_id = self.conversation_service.create_conversation(
-                conversation_id
-            )
+            conversation_id = self.conversation_service.create_conversation(conversation_id)
         else:
             conversation_id = self.conversation_service.create_conversation()
 
@@ -171,4 +167,3 @@ class ChatService:
                 "traceback": traceback.format_exc(),
             }
             yield f"data: {json.dumps(error_data)}\n\n"
-

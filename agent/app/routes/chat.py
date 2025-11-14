@@ -42,14 +42,10 @@ async def chat_stream(
         try:
             conversation_id = UUID(request.conversation_id)
         except ValueError:
-            raise HTTPException(
-                status_code=400, detail="Invalid conversation_id format"
-            )
+            raise HTTPException(status_code=400, detail="Invalid conversation_id format")
 
     return StreamingResponse(
-        chat_service.stream_chat_response(
-            message=request.message, conversation_id=conversation_id
-        ),
+        chat_service.stream_chat_response(message=request.message, conversation_id=conversation_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -57,4 +53,3 @@ async def chat_stream(
             "X-Accel-Buffering": "no",  # Disable buffering in nginx
         },
     )
-

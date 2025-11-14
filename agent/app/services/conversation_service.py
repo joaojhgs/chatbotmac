@@ -42,19 +42,20 @@ class ConversationService:
             conversation_id = uuid4()
         else:
             # Check if conversation exists
-            response = self.supabase.table("conversations").select("id").eq("id", str(conversation_id)).execute()
+            response = (
+                self.supabase.table("conversations")
+                .select("id")
+                .eq("id", str(conversation_id))
+                .execute()
+            )
             if response.data:
                 return conversation_id
 
         # Create new conversation
-        self.supabase.table("conversations").insert(
-            {"id": str(conversation_id)}
-        ).execute()
+        self.supabase.table("conversations").insert({"id": str(conversation_id)}).execute()
         return conversation_id
 
-    def save_message(
-        self, conversation_id: UUID, role: str, content: str
-    ) -> UUID:
+    def save_message(self, conversation_id: UUID, role: str, content: str) -> UUID:
         """
         Save a message to the database.
 
@@ -156,9 +157,7 @@ class ConversationService:
             True if successful
         """
         # Cascade delete will handle messages and tool_calls
-        self.supabase.table("conversations").delete().eq(
-            "id", str(conversation_id)
-        ).execute()
+        self.supabase.table("conversations").delete().eq("id", str(conversation_id)).execute()
         return True
 
     def get_all_messages(self, conversation_id: UUID) -> list[Message]:
@@ -192,4 +191,3 @@ class ConversationService:
             )
             for msg in response.data
         ]
-

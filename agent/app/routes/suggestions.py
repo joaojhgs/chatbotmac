@@ -60,4 +60,3 @@ async def get_suggestions(
     suggestions = await suggestion_service.generate_suggestions(history)
 
     return {"suggestions": suggestions}
-

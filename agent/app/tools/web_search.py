@@ -18,7 +18,7 @@ def create_web_search_tool():
 
     # Create Brave Search tool directly and customize its name and description
     search_tool = BraveSearch.from_api_key(api_key=brave_api_key)
-    
+
     # Override the name to be "web_search" instead of "brave_search"
     search_tool.name = "web_search"
     search_tool.description = """Search the web for current information about MacBook Air using Brave Search.

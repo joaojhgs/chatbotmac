@@ -24,4 +24,3 @@ def format_history_for_agent(
         elif msg.role == "assistant":
             messages.append(AIMessage(content=msg.content))
     return messages
-
