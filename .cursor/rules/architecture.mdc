@@ -1,3 +1,619 @@
 ---
-alwaysApply: true
+description: To plan out the setup of new features or refactors before executing it
+alwaysApply: false
 ---
+# MacBook Air Chatbot - Architecture & Development Guide
+
+## Project Overview
+
+This is a full-stack AI chatbot application with:
+- **Backend**: FastAPI + LangChain + Supabase (Python)
+- **Frontend**: Next.js + React + Zustand + Ant Design X (TypeScript)
+
+## Backend Architecture
+
+### Directory Structure
+```
+agent/
+├── app/
+│   ├── main.py              # FastAPI app initialization, lifespan management
+│   ├── agent.py              # LangChain agent setup
+│   ├── models/              # Pydantic models
+│   │   ├── schemas.py        # API request/response schemas
+│   │   └── database.py       # Database models
+│   ├── routes/               # API route handlers (thin controllers)
+│   │   ├── chat.py           # Chat streaming endpoint
+│   │   ├── conversations.py  # Conversation CRUD
+│   │   ├── suggestions.py    # Prompt suggestions
+│   │   └── health.py         # Health checks
+│   ├── services/             # Business logic (fat services)
+│   │   ├── chat_service.py   # Chat streaming & agent orchestration
+│   │   ├── conversation_service.py  # Conversation DB operations
+│   │   └── suggestion_service.py    # LLM-based suggestions
+│   ├── tools/                # LangChain tools
+│   │   ├── rag_tool.py       # RAG retrieval tool
+│   │   └── web_search.py     # Web search tool
+│   ├── rag/                  # RAG implementation
+│   │   ├── supabase_client.py # Vector store client
+│   │   └── embeddings.py     # Embedding generation
+│   └── utils/                # Utility functions
+│       └── message_formatter.py
+```
+
+### Key Patterns
+
+#### 1. Service Layer Pattern
+Services contain business logic. Routes are thin controllers that use FastAPI dependency injection.
+
+**Example: Creating a new service**
+```python
+# app/services/my_service.py
+class MyService:
+    def __init__(self, dependency: SomeDependency):
+        self.dependency = dependency
+    
+    async def do_something(self, param: str) -> dict:
+        # Business logic here
+        return {"result": "value"}
+
+# In app/main.py, initialize:
+my_service: MyService | None = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global my_service
+    my_service = MyService(dependency)
+    yield
+
+# In app/routes/my_route.py
+def get_my_service() -> MyService:
+    from app.main import my_service
+    if my_service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    return my_service
+
+@router.post("/endpoint")
+async def my_endpoint(
+    service: MyService = Depends(get_my_service),
+):
+    return await service.do_something("param")
+```
+
+#### 2. SSE Streaming Pattern
+Use `asyncio.Queue` and background tasks for reliable streaming that persists even if client disconnects.
+
+**Example: SSE streaming with background processing**
+```python
+async def stream_response(self, input_data: str):
+    event_queue = asyncio.Queue()
+    
+    async def process_in_background():
+        # Process completely, even if generator stops
+        try:
+            async for event in some_async_generator(input_data):
+                await event_queue.put({"type": "event", "data": event})
+            await event_queue.put({"type": "done"})
+        except Exception as e:
+            await event_queue.put({"type": "error", "message": str(e)})
+    
+    background_task = asyncio.create_task(process_in_background())
+    
+    try:
+        while True:
+            event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
+            yield f"data: {json.dumps(event)}\n\n"
+            if event.get("type") == "done":
+                break
+    except (BrokenPipeError, ConnectionResetError):
+        pass  # Client disconnected, but background task continues
+```
+
+#### 3. Database Operations Pattern
+Use ConversationService for all DB operations. Methods return UUIDs for created records.
+
+**Example: Saving messages with tool calls**
+```python
+# Save user message
+user_msg_id = conversation_service.save_message(
+    conversation_id=conversation_id,
+    role="user",
+    content=message,
+)
+
+# Save assistant message incrementally
+assistant_msg_id = conversation_service.save_message(
+    conversation_id=conversation_id,
+    role="assistant",
+    content=partial_content,
+)
+
+# Save tool call
+conversation_service.save_tool_call(
+    message_id=assistant_msg_id,
+    tool_name="web_search",
+    input_data={"query": "macbook air"},
+    result="Search results...",
+)
+```
+
+#### 4. LangChain Tool Pattern
+Tools are decorated functions that return strings. Use `@tool` decorator.
+
+**Example: Creating a new tool**
+```python
+from langchain_core.tools import tool
+
+@tool
+def my_tool(param: str) -> str:
+    """
+    Tool description for the LLM.
+    
+    Args:
+        param: Description of parameter
+    
+    Returns:
+        Description of return value
+    """
+    # Tool implementation
+    result = do_something(param)
+    return str(result)  # Always return string
+```
+
+#### 5. Error Handling Pattern
+Catch exceptions in background tasks, save partial data, and enqueue error events.
+
+**Example: Error handling in background task**
+```python
+async def process_agent_stream():
+    try:
+        # Process events
+        async for event in agent.astream_events(...):
+            # Handle event
+            pass
+    except Exception as e:
+        # Save partial data
+        if partial_data:
+            conversation_service.save_message(...)
+        # Enqueue error
+        await event_queue.put({"type": "error", "message": str(e)})
+```
+
+### Adding New Features
+
+#### Adding a New API Endpoint
+
+1. **Create route file** (`app/routes/new_feature.py`):
+```python
+from fastapi import APIRouter, Depends
+from app.models.schemas import MyRequest, MyResponse
+from app.services.my_service import MyService
+
+router = APIRouter()
+
+def get_my_service() -> MyService:
+    from app.main import my_service
+    if my_service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    return my_service
+
+@router.post("/my-endpoint", response_model=MyResponse)
+async def my_endpoint(
+    request: MyRequest,
+    service: MyService = Depends(get_my_service),
+):
+    result = await service.process(request)
+    return MyResponse(**result)
+```
+
+2. **Create service** (`app/services/my_service.py`):
+```python
+class MyService:
+    async def process(self, request: MyRequest) -> dict:
+        # Business logic
+        return {"result": "value"}
+```
+
+3. **Create schemas** (`app/models/schemas.py`):
+```python
+class MyRequest(BaseModel):
+    field: str
+
+class MyResponse(BaseModel):
+    result: str
+```
+
+4. **Register router** (`app/main.py`):
+```python
+from app.routes import new_feature
+app.include_router(new_feature.router)
+```
+
+5. **Initialize service** (`app/main.py`):
+```python
+my_service: MyService | None = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global my_service
+    my_service = MyService()
+    yield
+```
+
+## Frontend Architecture
+
+### Directory Structure
+```
+frontend/app/
+├── page.tsx                  # Main chat interface (UI only)
+├── layout.tsx               # Root layout
+├── components/              # Reusable React components
+│   ├── MarkdownContent.tsx  # Markdown renderer
+│   └── ToolCallDisplay.tsx  # Tool call UI
+├── hooks/                   # Custom React hooks
+│   ├── useChatAgent.ts      # SSE streaming & agent management
+│   ├── useConversationHistory.ts  # History loading & polling
+│   ├── useMessageSync.ts    # Sync useXChat with Zustand
+│   ├── useSuggestions.ts   # Prompt suggestions
+│   ├── useClearHistory.ts  # History clearing
+│   └── index.ts             # Barrel export
+├── store/                   # Zustand state management
+│   └── chatStore.ts         # Centralized chat state
+├── types/                   # TypeScript types
+│   └── chat.ts              # Chat-related types
+└── utils/                   # Utility functions
+    ├── conversation.ts      # Conversation ID management
+    └── sse.ts               # SSE parsing
+```
+
+### Key Patterns
+
+#### 1. Zustand Store Pattern
+Single source of truth for all chat state. Actions update state immutably.
+
+**Example: Adding new state and actions**
+```typescript
+// In app/store/chatStore.ts
+interface ChatState {
+  // Existing state...
+  myNewState: string[];
+  
+  // Actions
+  setMyNewState: (value: string[]) => void;
+  addToMyNewState: (value: string) => void;
+}
+
+export const useChatStore = create<ChatState>((set, get) => ({
+  // Initial state
+  myNewState: [],
+  
+  // Actions
+  setMyNewState: (value) => set({ myNewState: value }),
+  addToMyNewState: (value) => 
+    set((state) => ({ 
+      myNewState: [...state.myNewState, value] 
+    })),
+}));
+```
+
+#### 2. Custom Hook Pattern
+Encapsulate logic in hooks. Hooks can use other hooks and Zustand store.
+
+**Example: Creating a new hook**
+```typescript
+// app/hooks/useMyFeature.ts
+import { useEffect, useState } from 'react';
+import { useChatStore } from '../store/chatStore';
+
+export function useMyFeature() {
+  const { myState, setMyState } = useChatStore();
+  const [loading, setLoading] = useState(false);
+  
+  const doSomething = async () => {
+    setLoading(true);
+    try {
+      const result = await fetch('/api/endpoint');
+      const data = await result.json();
+      setMyState(data);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  useEffect(() => {
+    // Side effects
+  }, []);
+  
+  return { doSomething, loading };
+}
+```
+
+#### 3. Ant Design X Integration Pattern
+Use `useXAgent` for SSE streaming, `useXChat` for message management.
+
+**Example: Using useXAgent**
+```typescript
+const [agent] = useXAgent({
+  request: async (info: { message: string }, callbacks) => {
+    const { message } = info;
+    const { onSuccess, onUpdate, onError } = callbacks;
+    
+    try {
+      const response = await fetch('/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      });
+      
+      for await (const event of parseSSEStream(response)) {
+        switch (event.type) {
+          case 'content_delta':
+            onUpdate({ data: event.content });
+            break;
+          case 'done':
+            onSuccess([{ data: fullContent }]);
+            break;
+        }
+      }
+    } catch (error) {
+      onError(error as Error);
+    }
+  },
+});
+```
+
+#### 4. Message Synchronization Pattern
+Sync `useXChat` messages with Zustand store to maintain single source of truth.
+
+**Example: Syncing messages**
+```typescript
+// In useMessageSync.ts
+useEffect(() => {
+  xChatMessages.forEach((xMsg) => {
+    const existingMsg = storeMessages.find(m => String(m.id) === String(xMsg.id));
+    
+    if (!existingMsg) {
+      addMessage({
+        id: xMsg.id,
+        role: xMsg.role,
+        content: extractContent(xMsg.message),
+        status: xMsg.status,
+      });
+    } else {
+      updateMessage(xMsg.id, {
+        content: extractContent(xMsg.message),
+        status: xMsg.status,
+      });
+    }
+  });
+}, [xChatMessages]);
+```
+
+#### 5. Polling Pattern
+Use refs to track state, timeouts for intervals, and cleanup on unmount.
+
+**Example: Polling for updates**
+```typescript
+const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+const lastContentLengthRef = useRef<number>(0);
+
+const startPolling = () => {
+  const poll = async () => {
+    const data = await fetchHistory();
+    const contentLength = data.lastMessage.content.length;
+    
+    if (contentLength > lastContentLengthRef.current) {
+      // Content changed, continue polling
+      lastContentLengthRef.current = contentLength;
+      pollTimeoutRef.current = setTimeout(poll, 2000);
+    } else {
+      // Content stopped changing, stop polling
+      clearTimeout(pollTimeoutRef.current!);
+    }
+  };
+  
+  pollTimeoutRef.current = setTimeout(poll, 2000);
+};
+
+useEffect(() => {
+  return () => {
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+    }
+  };
+}, []);
+```
+
+### Adding New Features
+
+#### Adding a New Component
+
+1. **Create component** (`app/components/MyComponent.tsx`):
+```typescript
+interface MyComponentProps {
+  prop1: string;
+  prop2?: number;
+}
+
+export function MyComponent({ prop1, prop2 }: MyComponentProps) {
+  const { state } = useChatStore();
+  
+  return (
+    <div className="glass-dark p-4">
+      {/* Component JSX */}
+    </div>
+  );
+}
+```
+
+2. **Use in page** (`app/page.tsx`):
+```typescript
+import { MyComponent } from './components/MyComponent';
+
+export default function Home() {
+  return (
+    <div>
+      <MyComponent prop1="value" />
+    </div>
+  );
+}
+```
+
+#### Adding a New Hook
+
+1. **Create hook** (`app/hooks/useMyHook.ts`):
+```typescript
+export function useMyHook() {
+  const [state, setState] = useState();
+  const { storeAction } = useChatStore();
+  
+  useEffect(() => {
+    // Side effects
+  }, []);
+  
+  const action = async () => {
+    // Hook logic
+  };
+  
+  return { state, action };
+}
+```
+
+2. **Export from barrel** (`app/hooks/index.ts`):
+```typescript
+export { useMyHook } from './useMyHook';
+```
+
+3. **Use in component**:
+```typescript
+import { useMyHook } from './hooks';
+
+const { state, action } = useMyHook();
+```
+
+#### Adding a New API Endpoint Call
+
+1. **Create utility function** (`app/utils/api.ts`):
+```typescript
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+export async function callMyEndpoint(params: MyParams): Promise<MyResponse> {
+  const response = await fetch(`${API_URL}/my-endpoint`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status}`);
+  }
+  
+  return response.json();
+}
+```
+
+2. **Use in hook or component**:
+```typescript
+import { callMyEndpoint } from '../utils/api';
+
+const result = await callMyEndpoint({ param: 'value' });
+```
+
+## Styling Guidelines
+
+### CSS Classes
+- `glass-dark`: Dark glassmorphism background
+- `glass`: Light glassmorphism background
+- `glass-strong`: Stronger glassmorphism effect
+- Use Tailwind utilities for spacing, colors, etc.
+
+### Component Styling Pattern
+```typescript
+<div className="glass-dark border border-white/10 p-4 rounded-lg">
+  {/* Content */}
+</div>
+```
+
+## TypeScript Best Practices
+
+1. **Always type function parameters and returns**
+2. **Use interfaces for object shapes**
+3. **Avoid `any` - use `unknown` if type is truly unknown**
+4. **Export types from `app/types/` directory**
+5. **Use type guards for runtime type checking**
+
+## Python Best Practices
+
+1. **Use type hints for all functions**
+2. **Use Pydantic models for API schemas**
+3. **Use async/await for I/O operations**
+4. **Handle exceptions explicitly**
+5. **Use dependency injection for services**
+6. **Follow PEP 8 style guide**
+
+## Common Tasks
+
+### Backend: Add a new tool call type
+1. Create tool in `app/tools/`
+2. Register in `app/agent.py`
+3. Tool calls are automatically saved via `chat_service.py`
+
+### Frontend: Display new tool call type
+1. Update `ToolCall` type in `app/types/chat.ts`
+2. Update `ToolCallDisplay` component if needed
+3. Tool calls are automatically displayed from store
+
+### Backend: Add new database table
+1. Create migration SQL in `agent/migrations/`
+2. Create Pydantic model in `app/models/database.py`
+3. Add methods to `ConversationService` or create new service
+
+### Frontend: Add new message status
+1. Update `Message` interface in `app/store/chatStore.ts`
+2. Update components that check status
+3. Update hooks that set status
+
+## Testing Patterns
+
+### Backend Testing
+```python
+import pytest
+from app.services.my_service import MyService
+
+def test_my_service():
+    service = MyService(dependency)
+    result = service.do_something("input")
+    assert result == expected
+```
+
+### Frontend Testing
+```typescript
+import { render, screen } from '@testing-library/react';
+import { MyComponent } from './MyComponent';
+
+test('renders component', () => {
+  render(<MyComponent prop="value" />);
+  expect(screen.getByText('Expected')).toBeInTheDocument();
+});
+```
+
+## Environment Variables
+
+### Backend (.env)
+- `OPENAI_API_KEY`: OpenAI API key
+- `SUPABASE_URL`: Supabase project URL
+- `SUPABASE_KEY`: Supabase service role key
+- `BRAVE_API_KEY`: Brave Search API key
+
+### Frontend (.env.local)
+- `NEXT_PUBLIC_API_URL`: Backend API URL
+
+## Important Notes
+
+1. **SSE Streaming**: Always use background tasks for processing that must complete even if client disconnects
+2. **State Management**: Zustand is single source of truth - sync external state (useXChat) to it
+3. **Tool Calls**: Track saved tool calls to prevent duplicates during partial saves
+4. **Polling**: Continue polling until content stops changing (3 consecutive polls with no change)
+5. **Loading States**: Show loading dots when `status === 'loading'` OR `isPolling === true`
+6. **Error Handling**: Always catch exceptions in background tasks and save partial data
+7. **Type Safety**: Use TypeScript types consistently, avoid `any`
+8. **Dependency Injection**: Use FastAPI `Depends()` for all services in routes
+
