@@ -1,0 +1,65 @@
+{
+  "test_cases": [
+    {
+      "id": "tc_001",
+      "question": "What is the battery life of the MacBook Air M4?",
+      "expected_tools": ["retrieve_macbook_facts"],
+      "reference_answer": "The MacBook Air M4 offers up to 18 hours of battery life."
+    },
+    {
+      "id": "tc_002",
+      "question": "What are the display specifications for the MacBook Air M4?",
+      "expected_tools": ["retrieve_macbook_facts"],
+      "reference_answer": "The MacBook Air M4 features a Liquid Retina display with high resolution."
+    },
+    {
+      "id": "tc_003",
+      "question": "How much RAM does the MacBook Air M4 come with?",
+      "expected_tools": ["retrieve_macbook_facts"],
+      "reference_answer": "The MacBook Air M4 comes with 8GB of unified memory as standard, with options to upgrade."
+    },
+    {
+      "id": "tc_004",
+      "question": "What is the starting price of the MacBook Air M4?",
+      "expected_tools": ["retrieve_macbook_facts", "web_search"],
+      "reference_answer": "The MacBook Air M4 starts at $999 for the 13-inch model."
+    },
+    {
+      "id": "tc_005",
+      "question": "Compare the MacBook Air M4 with the M3 model.",
+      "expected_tools": ["retrieve_macbook_facts"],
+      "reference_answer": "The M4 offers improved performance, better battery life, and enhanced features compared to the M3."
+    },
+    {
+      "id": "tc_006",
+      "question": "What ports are available on the MacBook Air M4?",
+      "expected_tools": ["retrieve_macbook_facts"],
+      "reference_answer": "The MacBook Air M4 includes MagSafe charging, two Thunderbolt 3/USB-C ports, and a headphone jack."
+    },
+    {
+      "id": "tc_007",
+      "question": "What is the weight of the 13-inch MacBook Air M4?",
+      "expected_tools": ["retrieve_macbook_facts"],
+      "reference_answer": "The 13-inch MacBook Air M4 weighs approximately 2.7 pounds (1.24 kg)."
+    },
+    {
+      "id": "tc_008",
+      "question": "What storage options are available for the MacBook Air M4?",
+      "expected_tools": ["retrieve_macbook_facts"],
+      "reference_answer": "The MacBook Air M4 is available with storage options starting from 256GB SSD, with options up to 2TB."
+    },
+    {
+      "id": "tc_009",
+      "question": "What is the processor speed of the MacBook Air M4?",
+      "expected_tools": ["retrieve_macbook_facts"],
+      "reference_answer": "The MacBook Air M4 features Apple's M4 chip with 8-core CPU and up to 10-core GPU."
+    },
+    {
+      "id": "tc_010",
+      "question": "Does the MacBook Air M4 support external displays?",
+      "expected_tools": ["retrieve_macbook_facts"],
+      "reference_answer": "Yes, the MacBook Air M4 supports external displays, with the ability to connect up to two external displays."
+    }
+  ]
+}
+
